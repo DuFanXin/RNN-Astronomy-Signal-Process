@@ -168,11 +168,67 @@ def splite_merge_csv():
 	print('Done splite and merge csv')
 
 
+def write_csv():
+	import pandas as pd
+	num_to_type = {
+		0: 'galaxy',
+		1: 'qso',
+		2: 'star',
+		3: 'unknown'
+	}
+	type_to_num = {
+		'galaxy': 0,
+		'qso': 1,
+		'star': 2,
+		'unknown': 3
+	}
+	test_set = pd.read_csv(filepath_or_buffer=os.path.join(FLAGS.data_dir, 'test_set_test.csv'), header=0, sep=',')
+	test_arr = test_set.values
+	print(test_arr.shape)
+	# for index, row in test_set.iterrows():
+	# 	row['prediction'] = 1
+	test_arr[0][-1] = 11
+	test_set = pd.DataFrame(data=test_arr, columns=['id', 'type', 'prediction'])
+	# test_set.fillna(value=0)
+	# test_set['prediction'] = test_set['type'].map(type_to_num)
+	test_set.to_csv(path_or_buf='../data/test_set_test.csv', columns=['id', 'type', 'prediction'], index=False)
+	print('Done prediction')
+
+
+def fill_nan():
+	import pandas as pd
+	import numpy as np
+	num_to_type = {
+		0: 'galaxy',
+		1: 'qso',
+		2: 'star',
+		3: 'unknown'
+	}
+	test_set = pd.read_csv(filepath_or_buffer=os.path.join(FLAGS.data_dir, 'test_set_test.csv'), header=0, sep=',')
+
+	def repla(string):
+		if string not in num_to_type.values():
+			return num_to_type[np.random.randint(low=0, high=4)]
+		else:
+			return string
+	# groups = test_set.groupby('prediction class')
+	# for name, group in groups:
+	# 	print('name: %s' % name)
+	# test_set['isnull'] = test_set['prediction class']
+	# test_set['isnull'] = test_set['prediction class'].isnull().map(lambda x: 1 if (x is True) else None)
+	# test_set['prediction class'] = \
+	# 	test_set['isnull'].map(lambda x: num_to_type[np.random.randint(low=0, high=4)] if (x is True) else None)
+	test_set['prediction class'] = test_set['prediction class'].map(lambda x: repla(x))
+	test_set.to_csv(path_or_buf='../data/test_set_test.csv', index=False)
+
+
 def main():
 	# splite_merge_csv()
 	# write_img_to_tfrecords()
 	# test()
-	read_check_tfrecords()
+	# read_check_tfrecords()
+	fill_nan()
+	# write_csv()
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
