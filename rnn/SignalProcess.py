@@ -30,7 +30,8 @@ UNITS_NUM = 128
 TRAIN_SET_NAME = 'train_set.tfrecords'
 VALIDATION_SET_NAME = 'validation_set.tfrecords'
 TEST_SET_NAME = 'test_set.tfrecords'
-CHECK_POINT_PATH = None
+PREDICT_SET_NAME = 'predict_set.tfrecords'
+CHECK_POINT_PATH = '../data/History/train_2nd'
 
 
 def write_data_to_tfrecords():
@@ -45,6 +46,7 @@ def write_data_to_tfrecords():
 	train_set_writer = tf.python_io.TFRecordWriter(os.path.join(FLAGS.data_dir, TRAIN_SET_NAME))
 	validation_set_writer = tf.python_io.TFRecordWriter(os.path.join(FLAGS.data_dir, VALIDATION_SET_NAME))
 	test_set_writer = tf.python_io.TFRecordWriter(os.path.join(FLAGS.data_dir, TEST_SET_NAME))
+	predict_set_writer = tf.python_io.TFRecordWriter(os.path.join(FLAGS.data_dir, PREDICT_SET_NAME))
 
 	train_set = pd.read_csv(filepath_or_buffer=os.path.join(FLAGS.data_dir, 'train_set.csv'), header=0, sep=',')
 	# splite_merge_csv()
@@ -84,14 +86,14 @@ def write_data_to_tfrecords():
 	validation_set_writer.close()
 	print("Done validation_set writing")
 
-	test_set = pd.read_csv(filepath_or_buffer=os.path.join(FLAGS.data_dir, 'first_test_index_20180131.csv'), header=0, sep=',')
+	test_set = pd.read_csv(filepath_or_buffer=os.path.join(FLAGS.data_dir, 'validation_set.csv'), header=0, sep=',')
 	# splite_merge_csv()
 	# print(test_set.head())
 	row_num = test_set.shape[0]
 	for index, row in test_set.iterrows():
 		# print(row['type'])
 		test_list = np.loadtxt(
-			os.path.join('../data/first_test_data_20180131', '%d.txt' % row['id']), delimiter=",", skiprows=0, dtype=np.float32)
+			os.path.join('../data/first_train_data_20180131', '%d.txt' % row['id']), delimiter=",", skiprows=0, dtype=np.float32)
 
 		example = tf.train.Example(features=tf.train.Features(feature={
 			'label': tf.train.Feature(int64_list=tf.train.Int64List(value=[row['id']])),
@@ -102,6 +104,26 @@ def write_data_to_tfrecords():
 			print('Done test_set writing %.2f%%' % (index / row_num * 100))
 	test_set_writer.close()
 	print("Done test_set writing")
+
+	predict_set = pd.read_csv(filepath_or_buffer=os.path.join(FLAGS.data_dir, 'first_test_index_20180131.csv'), header=0, sep=',')
+	# splite_merge_csv()
+	# print(predict_set.head())
+	row_num = predict_set.shape[0]
+	for index, row in predict_set.iterrows():
+		# print(row['type'])
+		predict_list = np.loadtxt(
+			os.path.join('../data/first_test_data_20180131', '%d.txt' % row['id']), delimiter=",", skiprows=0,
+			dtype=np.float32)
+
+		example = tf.train.Example(features=tf.train.Features(feature={
+			'label': tf.train.Feature(int64_list=tf.train.Int64List(value=[row['id']])),
+			'signal': tf.train.Feature(bytes_list=tf.train.BytesList(value=[predict_list.tobytes()]))
+		}))
+		predict_set_writer.write(example.SerializeToString())  # 序列化为字符串
+		if index % 100 == 0:
+			print('Done predict_set writing %.2f%%' % (index / row_num * 100))
+	predict_set_writer.close()
+	print("Done predict_set writing")
 
 
 def read_image(file_queue):
@@ -249,21 +271,42 @@ class RNN:
 			self.is_traing = tf.placeholder(dtype=tf.bool, name='is_traing')
 
 			normed_input_signal = self.batch_norm(x=self.input_signal, is_training=self.is_traing, name='input')
+			input_ = tf.transpose(normed_input_signal, [1, 0, 2])
+			input_ = tf.reshape(input_, [-1, 1])
+			input_ = tf.split(input_, self.time_step)
+			print('1')
+
+			# normed_input_signal = self.batch_norm(x=input_, is_training=self.is_traing, name='input')
 			# normed_input_signal = self.input_signal
 			# cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=self.num_units)
-			cell = tf.nn.rnn_cell.GRUCell(num_units=self.num_units)
-			cell = tf.nn.rnn_cell.DropoutWrapper(cell, input_keep_prob=self.keep_prob, output_keep_prob=self.keep_prob)
-			h0 = cell.zero_state(batch_size=self.batch_size, dtype=tf.float32)
-			outputs, final_state = tf.nn.dynamic_rnn(cell=cell, inputs=normed_input_signal, initial_state=h0)
-			print('final_state shape: ' + str(final_state.shape))  # (batch_size, 128)
-			print('outputs shape: ' + str(outputs[:, -1, :].shape))  # (batch_size, time_step, 128)
+			# cell = tf.nn.rnn_cell.GRUCell(num_units=self.num_units)
+			lstm_fw_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=self.num_units)
+			lstm_bw_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=self.num_units)
+			zero_state_fw = lstm_fw_cell.zero_state(batch_size=batch_size, dtype=tf.float32)
+			zero_state_bw = lstm_bw_cell.zero_state(batch_size=batch_size, dtype=tf.float32)
+			lstm_fw_cell = tf.nn.rnn_cell.DropoutWrapper(
+				lstm_fw_cell, input_keep_prob=self.keep_prob, output_keep_prob=self.keep_prob)
+			lstm_fw_cell = tf.nn.rnn_cell.DropoutWrapper(
+				lstm_fw_cell, input_keep_prob=self.keep_prob, output_keep_prob=self.keep_prob)
+			print('2')
+			# h0 = cell.zero_state(batch_size=self.batch_size, dtype=tf.float32)
+			# outputs, final_state = tf.nn.dynamic_rnn(cell=cell, inputs=normed_input_signal, initial_state=h0)
+			outputs, _, _ = tf.nn.static_bidirectional_rnn(
+				cell_fw=lstm_fw_cell, cell_bw=lstm_bw_cell, inputs=input_,
+				initial_state_fw=zero_state_fw, initial_state_bw=zero_state_bw)
+			# outputs, _, _ = tf.nn.bidirectional_dynamic_rnn(
+			# 	cell_fw=lstm_fw_cell, cell_bw=lstm_bw_cell, inputs=input_,
+			# 	initial_state_fw=zero_state_fw, initial_state_bw=zero_state_bw)
+			print('3')
+			# print('final_state shape: ' + str(final_state.shape))  # (batch_size, 128)
+			print('outputs shape: ' + str(outputs[-1].shape))  # (batch_size, time_step, 128)
 			# normed_final_state_h = self.batch_norm(x=final_state.h, is_training=self.is_traing, name='output')
-			normed_outputs = self.batch_norm(x=outputs[:, -1, :], is_training=self.is_traing, name='output')
+			normed_outputs = self.batch_norm(x=outputs[-1], is_training=self.is_traing, name='output')
 			# normed_final_state_h = final_state.h
 
 		with tf.name_scope('fnn'), tf.variable_scope(name_or_scope='rnn'):
 			w = tf.get_variable(
-				name='w', shape=[self.num_units, self.num_class], dtype=tf.float32,
+				name='w', shape=[2 * self.num_units, self.num_class], dtype=tf.float32,
 				initializer=tf.truncated_normal_initializer(stddev=tf.sqrt(x=2 / (self.num_units * self.num_class))))
 			# b = tf.get_variable(
 			# 	name='b', shape=[self.num_class], dtype=tf.float32,
@@ -352,7 +395,7 @@ class RNN:
 		validation_file_path = os.path.join(FLAGS.data_dir, VALIDATION_SET_NAME)
 		validation_image_filename_queue = tf.train.string_input_producer(
 			string_tensor=tf.train.match_filenames_once(validation_file_path), num_epochs=1, shuffle=True)
-		ckpt_path = os.path.join(FLAGS.model_dir, "model.ckpt")  # CHECK_POINT_PATH
+		ckpt_path = CHECK_POINT_PATH
 		validation_images, validation_labels = read_image_batch(validation_image_filename_queue, VALIDATION_BATCH_SIZE)
 		# tf.summary.scalar("loss", self.loss_mean)
 		# tf.summary.scalar('accuracy', self.accuracy)
@@ -393,7 +436,7 @@ class RNN:
 			coord.join(threads)
 		print('Done validating')
 
-	def predict(self):
+	def test(self):
 		# import numpy as np
 		import pandas as pd
 		num_to_type = {
@@ -405,10 +448,10 @@ class RNN:
 		id_to_type = {}
 		self.set_up_network(batch_size=TEST_BATCH_SIZE)
 		test_file_path = os.path.join(FLAGS.data_dir, TEST_SET_NAME)
-		test_set = pd.read_csv(filepath_or_buffer=os.path.join(FLAGS.data_dir, 'test_set_test.csv'), header=0, sep=',')
+		test_set = pd.read_csv(filepath_or_buffer=os.path.join(FLAGS.data_dir, 'test_set.csv'), header=0, sep=',')
 		test_image_filename_queue = tf.train.string_input_producer(
 			string_tensor=tf.train.match_filenames_once(test_file_path), num_epochs=1, shuffle=True)
-		ckpt_path = os.path.join(FLAGS.model_dir, "model.ckpt")  # CHECK_POINT_PATH
+		ckpt_path = CHECK_POINT_PATH
 		test_images, test_labels = read_image_batch(test_image_filename_queue, TEST_BATCH_SIZE)
 		row_num = test_set.shape[0]
 		all_parameters_saver = tf.train.Saver()
@@ -437,10 +480,67 @@ class RNN:
 					# print('num %d, loss: %.6f and accuracy: %.6f' % (epoch, lo, acc))
 					for index, the_id in enumerate(label):
 						id_to_type[the_id] = num_to_type[predict_num[index]]
-					print('Done testing %.2f%%' % (TEST_BATCH_SIZE * epoch / row_num * 100))
+					print('Done predicting %.2f%%' % (TEST_BATCH_SIZE * epoch / row_num * 100))
 					epoch += 1
 			except tf.errors.OutOfRangeError:
-				print('Done testing -- epoch limit reached')
+				print('Done predicting -- epoch limit reached')
+			finally:
+				# When done, ask the threads to stop.
+				coord.request_stop()
+			# coord.request_stop()
+			coord.join(threads)
+		test_set['prediction class'] = test_set['id'].map(id_to_type)
+		test_set.to_csv(path_or_buf='../data/test_set.csv', index=False)
+		print('Done predicting')
+
+	def predict(self):
+		# import numpy as np
+		import pandas as pd
+		num_to_type = {
+			0: 'galaxy',
+			1: 'qso',
+			2: 'star',
+			3: 'unknown'
+		}
+		id_to_type = {}
+		self.set_up_network(batch_size=TEST_BATCH_SIZE)
+		test_file_path = os.path.join(FLAGS.data_dir, TEST_SET_NAME)
+		test_set = pd.read_csv(filepath_or_buffer=os.path.join(FLAGS.data_dir, 'test_set_test.csv'), header=0, sep=',')
+		test_image_filename_queue = tf.train.string_input_producer(
+			string_tensor=tf.train.match_filenames_once(test_file_path), num_epochs=1, shuffle=True)
+		ckpt_path = CHECK_POINT_PATH
+		test_images, test_labels = read_image_batch(test_image_filename_queue, TEST_BATCH_SIZE)
+		row_num = test_set.shape[0]
+		all_parameters_saver = tf.train.Saver()
+		with tf.Session() as sess:  # 开始一个会话
+			sess.run(tf.global_variables_initializer())
+			sess.run(tf.local_variables_initializer())
+			# summary_writer = tf.summary.FileWriter(FLAGS.tb_dir, sess.graph)
+			# tf.summary.FileWriter(FLAGS.model_dir, sess.graph)
+			all_parameters_saver.restore(sess=sess, save_path=ckpt_path)
+			coord = tf.train.Coordinator()
+			threads = tf.train.start_queue_runners(coord=coord)
+			try:
+				epoch = 1
+				while not coord.should_stop():
+					# Run training steps or whatever
+					# print('epoch ' + str(epoch))
+					example, label = sess.run([test_images, test_labels])  # 在会话中取出image和label
+					# print(label)
+					predict_num = sess.run(
+						tf.argmax(input=self.prediction, axis=-1),
+						feed_dict={
+							self.input_signal: example, self.keep_prob: 1.0,
+							self.lamb: 0.004, self.is_traing: True}
+					)
+					# summary_writer.add_summary(summary_str, epoch)
+					# print('num %d, loss: %.6f and accuracy: %.6f' % (epoch, lo, acc))
+					for index, the_id in enumerate(label):
+						id_to_type[the_id] = num_to_type[predict_num[index]]
+					print('Done predicting %.2f%%' % (TEST_BATCH_SIZE * epoch / row_num * 100))
+					epoch += 1
+			except tf.errors.OutOfRangeError:
+				print('Done predicting -- epoch limit reached')
 			finally:
 				# When done, ask the threads to stop.
 				coord.request_stop()
@@ -448,7 +548,7 @@ class RNN:
 			coord.join(threads)
 		test_set['prediction class'] = test_set['id'].map(id_to_type)
 		test_set.to_csv(path_or_buf='../data/test_set_test.csv', index=False)
-		print('Done prediction')
+		print('Done predicting')
 
 
 def main():
@@ -458,8 +558,9 @@ def main():
 	# read_check_tfrecords()
 	rnn = RNN()
 	# rnn.set_up_network(batch_size=TRAIN_BATCH_SIZE)
-	# rnn.train(batch_size=TRAIN_BATCH_SIZE)
+	rnn.train(batch_size=TRAIN_BATCH_SIZE)
 	# rnn.validate(batch_size=256)
+	# rnn.test()
 	# rnn.predict()
 	# read_check_tfrecords()
 
